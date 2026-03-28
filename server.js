@@ -1,6 +1,8 @@
 const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
 const connectDB = require('./config/db');
 
 // Load env vars
@@ -26,13 +28,24 @@ app.use((req, res, next) => {
     next();
 });
 
+// Ensure uploads directory exists
+const uploadsDir = path.join(__dirname, 'uploads', 'papers');
+if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// Serve uploaded files
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 // Route files
 const authRoutes = require('./routes/authRoutes');
 const superadminRoutes = require('./routes/superadminRoutes');
+const articleRoutes = require('./routes/articleRoutes');
 
 // Mount routers
 app.use('/api/auth', authRoutes);
 app.use('/api/superadmin', superadminRoutes);
+app.use('/api/articles', articleRoutes);
 
 app.get('/', (req, res) => {
     res.send('API is running...');
