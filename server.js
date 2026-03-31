@@ -28,10 +28,14 @@ app.use((req, res, next) => {
     next();
 });
 
-// Ensure uploads directory exists
+// Ensure uploads directories exist
 const uploadsDir = path.join(__dirname, 'uploads', 'papers');
 if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
+}
+const reportsDir = path.join(__dirname, 'uploads', 'reports');
+if (!fs.existsSync(reportsDir)) {
+    fs.mkdirSync(reportsDir, { recursive: true });
 }
 
 // Serve uploaded files
@@ -41,11 +45,15 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 const authRoutes = require('./routes/authRoutes');
 const superadminRoutes = require('./routes/superadminRoutes');
 const articleRoutes = require('./routes/articleRoutes');
+const adminRoutes = require('./routes/adminRoutes');
+const reviewerRoutes = require('./routes/reviewerRoutes');
 
 // Mount routers
 app.use('/api/auth', authRoutes);
 app.use('/api/superadmin', superadminRoutes);
 app.use('/api/articles', articleRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/reviewer', reviewerRoutes);
 
 app.get('/', (req, res) => {
     res.send('API is running...');

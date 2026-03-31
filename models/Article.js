@@ -40,13 +40,47 @@ const ArticleSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['Submitted', 'Reviewer 1', 'Reviewer 2', 'Technical Reviewer', 'Accepted', 'Payment', 'Published'],
+        enum: ['Submitted', 'Plagiarism Check', 'Revision Required', 'Reviewer 1', 'Reviewer 2', 'Technical Reviewer', 'Accepted', 'Payment', 'Published'],
         default: 'Submitted',
     },
+    // Plagiarism check fields (filled by admin)
+    plagiarismReport: { type: String },
+    plagiarismPercent: { type: Number },
+    aiSimilarityReport: { type: String },
+    aiSimilarityPercent: { type: Number },
+    plagiarismRemark: { type: String },
+    plagiarismDecision: {
+        type: String,
+        enum: ['Accepted', 'Rejected'],
+    },
+    // Revision history (stores previous submissions when paper is rejected & resubmitted)
+    revisionHistory: [{
+        paperFile: String,
+        originalFileName: String,
+        plagiarismReport: String,
+        plagiarismPercent: Number,
+        aiSimilarityReport: String,
+        aiSimilarityPercent: Number,
+        plagiarismRemark: String,
+        plagiarismDecision: String,
+        resubmittedAt: { type: Date, default: Date.now },
+    }],
     submittedBy: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
         required: true,
+    },
+    reviewer1: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+    },
+    reviewer2: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+    },
+    technicalReviewer: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
     },
 }, { timestamps: true });
 

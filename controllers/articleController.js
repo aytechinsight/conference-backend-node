@@ -1,4 +1,6 @@
 const Article = require('../models/Article');
+const User = require('../models/User');
+const emailUtils = require('../utils/emailUtils');
 const path = require('path');
 const fs = require('fs');
 
@@ -85,8 +87,7 @@ exports.submitArticle = async (req, res) => {
 exports.getMyArticles = async (req, res) => {
     try {
         const articles = await Article.find({ submittedBy: req.user._id })
-            .sort({ createdAt: -1 })
-            .select('-paperFile');
+            .sort({ createdAt: -1 });
 
         res.json({ success: true, articles });
     } catch (error) {
@@ -115,3 +116,74 @@ exports.getArticleById = async (req, res) => {
         res.status(500).json({ message: 'Server error while fetching article.' });
     }
 };
+
+// @desc Resubmit a paper after rejection (Revision Required)
+// @route PUT /api/articles/:articleId/resubmit
+// @access Private
+exports.resubmitArticle = async (req, res) => {
+    try {
+        const article = await Article.findOne({
+            articleId: req.params.articleId,
+            submittedBy: req.user._id,
+        });
+
+        if (!article) {
+            return res.status(404).json({ message: 'Article not found.' });
+        }
+
+        if (article.status !== 'Revision Required') {
+            return res.status(400).json({ message: 'Only papers with "Revision Required" status can be resubmitted.' });
+        }
+
+        if (!req.file) {
+            return res.status(400).json({ message: 'Please upload the revised paper file.' });
+        }
+
+        // Archive current submission into revision history
+        article.revisionHistory.push({
+            paperFile: article.paperFile,
+            originalFileName: article.originalFileName,
+            plagiarismReport: article.plagiarismReport,
+            plagiarismPercent: article.plagiarismPercent,
+            aiSimilarityReport: article.aiSimilarityReport,
+            aiSimilarityPercent: article.aiSimilarityPercent,
+            plagiarismRemark: article.plagiarismRemark,
+            plagiarismDecision: article.plagiarismDecision,
+            resubmittedAt: new Date(),
+        });
+
+        // Update with new paper
+        article.paperFile = req.file.path.replace(/\\/g, '/');
+        article.originalFileName = req.file.originalname;
+
+        // Clear plagiarism fields
+        article.plagiarismReport = undefined;
+        article.plagiarismPercent = undefined;
+        article.aiSimilarityReport = undefined;
+        article.aiSimilarityPercent = undefined;
+        article.plagiarismRemark = undefined;
+        article.plagiarismDecision = undefined;
+
+        // Reset status
+        article.status = 'Submitted';
+        await article.save();
+
+        res.json({
+            success: true,
+            message: 'Paper resubmitted successfully. It will be reviewed again.',
+            article: {
+                articleId: article.articleId,
+                title: article.title,
+                status: article.status,
+                originalFileName: article.originalFileName,
+            },
+        });
+    } catch (error) {
+        console.error('Resubmit article error:', error);
+        if (req.file) {
+            try { fs.unlinkSync(req.file.path); } catch {}
+        }
+        res.status(500).json({ message: 'Server error while resubmitting article.' });
+    }
+};
+

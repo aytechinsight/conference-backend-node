@@ -1,6 +1,8 @@
 const User = require('../models/User');
+const Article = require('../models/Article');
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
+const emailUtils = require('../utils/emailUtils');
 
 const REVIEWER_ROLES = ['reviewer 1', 'reviewer 2', 'technical reviewer'];
 
@@ -13,7 +15,6 @@ const ROLE_LABELS = {
     'reviewer 1': 'Reviewer 1',
     'reviewer 2': 'Reviewer 2',
     'technical reviewer': 'Technical Reviewer',
-    'admin': 'Conference Administrator',
 };
 
 // GET /api/superadmin/stats
@@ -63,8 +64,8 @@ exports.createReviewer = async (req, res) => {
     try {
         const { name, email, password, role } = req.body;
 
-        if (!REVIEWER_ROLES.includes(role) && role !== 'admin') {
-            return res.status(400).json({ message: 'Invalid role. Must be a reviewer or admin role.' });
+        if (!REVIEWER_ROLES.includes(role)) {
+            return res.status(400).json({ message: 'Invalid role. Must be a reviewer role.' });
         }
 
         const exists = await User.findOne({ email });
@@ -74,6 +75,59 @@ exports.createReviewer = async (req, res) => {
             name, email, password, role,
             isEmailVerified: true, profileComplete: true, fullName: name,
         });
+
+        // --- Auto-assign reviewers to articles if exactly 1 of each reviewer role now exists ---
+        try {
+            const [r1List, r2List, trList] = await Promise.all([
+                User.find({ role: 'reviewer 1' }),
+                User.find({ role: 'reviewer 2' }),
+                User.find({ role: 'technical reviewer' }),
+            ]);
+
+            if (r1List.length === 1 && r2List.length === 1 && trList.length === 1) {
+                // Active statuses that are still in the review pipeline
+                const activeStatuses = ['Submitted', 'Plagiarism Check', 'Revision Required', 'Reviewer 1', 'Reviewer 2', 'Technical Reviewer'];
+
+                // Find all active articles that are missing ANY of the three reviewer slots
+                const articlesToFix = await Article.find({
+                    status: { $in: activeStatuses },
+                    $or: [
+                        { reviewer1: { $exists: false } },
+                        { reviewer1: null },
+                        { reviewer2: { $exists: false } },
+                        { reviewer2: null },
+                        { technicalReviewer: { $exists: false } },
+                        { technicalReviewer: null },
+                    ],
+                });
+
+                for (const article of articlesToFix) {
+                    const wasFullyUnassigned = !article.reviewer1 && !article.reviewer2 && !article.technicalReviewer;
+
+                    if (!article.reviewer1) article.reviewer1 = r1List[0]._id;
+                    if (!article.reviewer2) article.reviewer2 = r2List[0]._id;
+                    if (!article.technicalReviewer) article.technicalReviewer = trList[0]._id;
+
+                    // Only bump status if it was completely unassigned (sitting at Submitted)
+                    if (wasFullyUnassigned) {
+                        article.status = 'Reviewer 1';
+                    }
+
+                    await article.save();
+
+                    // Notify the newly assigned role(s)
+                    if (role === 'reviewer 1') emailUtils.sendAssignmentEmailToReviewer(r1List[0].email, 'Reviewer 1', article.articleId, article.title);
+                    if (role === 'reviewer 2') emailUtils.sendAssignmentEmailToReviewer(r2List[0].email, 'Reviewer 2', article.articleId, article.title);
+                    if (role === 'technical reviewer') emailUtils.sendAssignmentEmailToReviewer(trList[0].email, 'Technical Reviewer', article.articleId, article.title);
+                }
+
+                if (articlesToFix.length > 0) {
+                    console.log(`Patched ${articlesToFix.length} articles with missing reviewers after ${role} creation.`);
+                }
+            }
+        } catch (assignErr) {
+            console.error('Auto-assignment on create failed (non-blocking):', assignErr);
+        }
 
         // Send professional credentials email
         const roleLabel = ROLE_LABELS[role] || role;
@@ -178,6 +232,30 @@ exports.deleteUser = async (req, res) => {
         const target = await User.findById(req.params.id);
         if (!target) return res.status(404).json({ message: 'User not found' });
         if (target.role === 'superadmin') return res.status(403).json({ message: 'Cannot delete superadmin account.' });
+
+        // If deleting a reviewer, unassign them from all articles and reset status to Submitted
+        if (REVIEWER_ROLES.includes(target.role)) {
+            const roleToField = {
+                'reviewer 1': 'reviewer1',
+                'reviewer 2': 'reviewer2',
+                'technical reviewer': 'technicalReviewer',
+            };
+            const field = roleToField[target.role];
+
+            // Find all articles assigned to this reviewer
+            const assignedArticles = await Article.find({ [field]: target._id });
+
+            for (const article of assignedArticles) {
+                article[field] = undefined;
+                // Reset status back to Submitted so it can be re-assigned
+                article.status = 'Submitted';
+                await article.save();
+            }
+
+            if (assignedArticles.length > 0) {
+                console.log(`Unassigned ${assignedArticles.length} articles from deleted ${target.role}: ${target.email}`);
+            }
+        }
 
         await User.findByIdAndDelete(req.params.id);
         res.json({ message: 'User deleted successfully' });
