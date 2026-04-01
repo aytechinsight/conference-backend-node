@@ -118,3 +118,78 @@ exports.sendPlagiarismAcceptedEmail = async (email, articleId, articleTitle) => 
         console.error('Failed to send plagiarism accepted email:', error);
     }
 };
+
+// ── NEW: Review Revision Email ──
+exports.sendReviewRevisionEmail = async (email, articleId, articleTitle, decision, remark) => {
+    try {
+        await transporter.sendMail({
+            from: `"iCreate 2026" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: `Revision Required — Paper ${articleId}`,
+            html: getHtmlTemplate(
+                'Revision Required by Reviewer',
+                `Your paper titled <strong>"${articleTitle}"</strong> (${articleId}) has been reviewed and the decision is: <strong>${decision}</strong>.
+                 <br/><br/><strong>Reviewer Remark:</strong><br/>${remark || 'No additional remarks.'}
+                 <br/><br/>Please log in to your dashboard, review the feedback, and upload a revised version of your paper.`
+            )
+        });
+    } catch (error) {
+        console.error('Failed to send review revision email:', error);
+    }
+};
+
+// ── NEW: Review Rejection Email ──
+exports.sendReviewRejectionEmail = async (email, articleId, articleTitle, remark) => {
+    try {
+        await transporter.sendMail({
+            from: `"iCreate 2026" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: `Paper Rejected — ${articleId}`,
+            html: getHtmlTemplate(
+                'Paper Rejected',
+                `We regret to inform you that your paper titled <strong>"${articleTitle}"</strong> (${articleId}) has been <strong>rejected</strong> during the review process.
+                 <br/><br/><strong>Reviewer Remark:</strong><br/>${remark || 'No additional remarks.'}
+                 <br/><br/>You are welcome to submit a fresh revised paper. Please log in to your dashboard and resubmit.`
+            )
+        });
+    } catch (error) {
+        console.error('Failed to send review rejection email:', error);
+    }
+};
+
+// ── NEW: Final Acceptance Email ──
+exports.sendFinalAcceptanceEmail = async (email, articleId, articleTitle) => {
+    try {
+        await transporter.sendMail({
+            from: `"iCreate 2026" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: `Paper Accepted — ${articleId} 🎉`,
+            html: getHtmlTemplate(
+                'Congratulations! Paper Accepted',
+                `We are pleased to inform you that your paper titled <strong>"${articleTitle}"</strong> (${articleId}) has been <strong>accepted</strong> after completing all review stages!
+                 <br/><br/>Please log in to your dashboard and proceed with the registration payment to finalize your participation in iCreate 2026.`
+            )
+        });
+    } catch (error) {
+        console.error('Failed to send final acceptance email:', error);
+    }
+};
+
+// ── NEW: Payment Confirmation Email ──
+exports.sendPaymentConfirmationEmail = async (email, articleId, articleTitle, amount) => {
+    try {
+        await transporter.sendMail({
+            from: `"iCreate 2026" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: `Payment Confirmed — ${articleId}`,
+            html: getHtmlTemplate(
+                'Payment Successful',
+                `Your payment of <strong>${amount}</strong> for the paper titled <strong>"${articleTitle}"</strong> (${articleId}) has been <strong>successfully confirmed</strong>.
+                 <br/><br/>Your registration is now complete. Thank you for participating in iCreate 2026!
+                 <br/><br/>You will receive further details about the conference schedule and proceedings soon.`
+            )
+        });
+    } catch (error) {
+        console.error('Failed to send payment confirmation email:', error);
+    }
+};

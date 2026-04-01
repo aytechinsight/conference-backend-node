@@ -1,5 +1,27 @@
 const mongoose = require('mongoose');
 
+// Review report schema — reusable for each reviewer stage
+const ReviewReportSchema = new mongoose.Schema({
+    scores: {
+        abstractQuality: { type: String, enum: ['Excellent', 'Good', 'Fair', 'Poor'] },
+        originalityNovelty: { type: String, enum: ['Excellent', 'Good', 'Fair', 'Poor'] },
+        technicalMethodology: { type: String, enum: ['Excellent', 'Good', 'Fair', 'Poor'] },
+        experimentalResults: { type: String, enum: ['Excellent', 'Good', 'Fair', 'Poor'] },
+        technicalDiscussion: { type: String, enum: ['Excellent', 'Good', 'Fair', 'Poor'] },
+        figureTableQuality: { type: String, enum: ['Excellent', 'Good', 'Fair', 'Poor'] },
+        referenceQuality: { type: String, enum: ['Excellent', 'Good', 'Fair', 'Poor'] },
+        languageFormatting: { type: String, enum: ['Excellent', 'Good', 'Fair', 'Poor'] },
+        innovationClarity: { type: String, enum: ['Excellent', 'Good', 'Fair', 'Poor'] },
+        conclusionStrength: { type: String, enum: ['Excellent', 'Good', 'Fair', 'Poor'] },
+    },
+    remark: { type: String },
+    decision: {
+        type: String,
+        enum: ['Accepted', 'Accept with Minor Revision', 'Accept with Major Revision', 'Reject'],
+    },
+    reviewedAt: { type: Date },
+}, { _id: false });
+
 const ArticleSchema = new mongoose.Schema({
     articleId: {
         type: String,
@@ -40,7 +62,7 @@ const ArticleSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['Submitted', 'Plagiarism Check', 'Revision Required', 'Reviewer 1', 'Reviewer 2', 'Technical Reviewer', 'Accepted', 'Payment', 'Published'],
+        enum: ['Submitted', 'Plagiarism Check', 'Revision Required', 'Reviewer 1', 'Reviewer 2', 'Technical Reviewer', 'Review Revision', 'Accepted', 'Payment', 'Published'],
         default: 'Submitted',
     },
     // Plagiarism check fields (filled by admin)
@@ -82,6 +104,36 @@ const ArticleSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
     },
+
+    // ── Review Reports ──
+    reviewer1Report: ReviewReportSchema,
+    reviewer2Report: ReviewReportSchema,
+    technicalReviewerReport: ReviewReportSchema,
+
+    // Track which reviewer stage sent the paper back for revision
+    reviewRevisionStage: {
+        type: String,
+        enum: ['Reviewer 1', 'Reviewer 2', 'Technical Reviewer'],
+    },
+    reviewRevisionRemark: { type: String },
+    reviewRevisionDecision: { type: String },
+
+    // Revised paper for reviewer revisions
+    revisedPaperFile: { type: String },
+    revisedPaperOriginalName: { type: String },
+
+    // ── Payment fields ──
+    selectedPlan: { type: String }, // e.g. "Peer Reviewed Journal - Indian", "Scopus Student - Indian", etc.
+    paymentAmount: { type: Number },
+    paymentCurrency: { type: String, default: 'INR' },
+    paymentStatus: {
+        type: String,
+        enum: ['Pending', 'Completed'],
+    },
+    razorpayOrderId: { type: String },
+    razorpayPaymentId: { type: String },
+    razorpaySignature: { type: String },
+    paidAt: { type: Date },
 }, { timestamps: true });
 
 // Auto-generate articleId before saving

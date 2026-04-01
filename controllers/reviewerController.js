@@ -2,6 +2,22 @@ const Article = require('../models/Article');
 const User = require('../models/User');
 const emailUtils = require('../utils/emailUtils');
 
+const SCORE_FIELDS = [
+    'abstractQuality',
+    'originalityNovelty',
+    'technicalMethodology',
+    'experimentalResults',
+    'technicalDiscussion',
+    'figureTableQuality',
+    'referenceQuality',
+    'languageFormatting',
+    'innovationClarity',
+    'conclusionStrength',
+];
+
+const VALID_SCORES = ['Excellent', 'Good', 'Fair', 'Poor'];
+const VALID_DECISIONS = ['Accepted', 'Accept with Minor Revision', 'Accept with Major Revision', 'Reject'];
+
 // @desc  Get articles assigned to this reviewer (matching their role queue)
 // @route GET /api/reviewer/articles
 // @access Private (reviewer roles only)
@@ -34,22 +50,53 @@ exports.getMyAssignedArticles = async (req, res) => {
     }
 };
 
-// @desc  Forward a paper to the next reviewer in the chain
-// @route PUT /api/reviewer/articles/:id/forward
+// @desc  Submit a review with scoring and decision
+// @route PUT /api/reviewer/articles/:id/review
 // @access Private (reviewer roles only)
-exports.forwardArticle = async (req, res) => {
+exports.submitReview = async (req, res) => {
     try {
         const role = req.user.role;
+        const { scores, remark, decision } = req.body;
+
+        // ── Validate decision ──
+        if (!decision || !VALID_DECISIONS.includes(decision)) {
+            return res.status(400).json({ message: `Invalid decision. Must be one of: ${VALID_DECISIONS.join(', ')}` });
+        }
+
+        // ── Validate scores ──
+        if (!scores || typeof scores !== 'object') {
+            return res.status(400).json({ message: 'Scores are required.' });
+        }
+        for (const field of SCORE_FIELDS) {
+            if (!scores[field] || !VALID_SCORES.includes(scores[field])) {
+                return res.status(400).json({ message: `Invalid or missing score for: ${field}. Must be one of: ${VALID_SCORES.join(', ')}` });
+            }
+        }
+
+        // ── Validate remark ──
+        if (!remark || !remark.trim()) {
+            return res.status(400).json({ message: 'Reviewer remark is required.' });
+        }
+
+        // ── Load article ──
         const article = await Article.findById(req.params.id)
-            .populate('submittedBy', 'email')
-            .populate('reviewer2', 'email name')
-            .populate('technicalReviewer', 'email name');
+            .populate('submittedBy', 'email fullName name')
+            .populate('reviewer2', 'email name fullName')
+            .populate('technicalReviewer', 'email name fullName');
 
         if (!article) {
             return res.status(404).json({ message: 'Article not found.' });
         }
 
-        // Verify this reviewer is actually assigned and it's their turn
+        // Build the review report object
+        const reviewReport = {
+            scores,
+            remark: remark.trim(),
+            decision,
+            reviewedAt: new Date(),
+        };
+
+        // ── Reviewer 1 ──
         if (role === 'reviewer 1') {
             if (String(article.reviewer1) !== String(req.user._id) &&
                 String(article.reviewer1?._id) !== String(req.user._id)) {
@@ -58,18 +105,56 @@ exports.forwardArticle = async (req, res) => {
             if (article.status !== 'Reviewer 1') {
                 return res.status(400).json({ message: 'This paper is not currently in Reviewer 1 stage.' });
             }
-            article.status = 'Reviewer 2';
-            await article.save();
 
-            // Notify Reviewer 2
-            if (article.reviewer2?.email) {
-                emailUtils.sendAssignmentEmailToReviewer(article.reviewer2.email, 'Reviewer 2', article.articleId, article.title);
-            }
-            // Notify Author (no reviewer names)
-            if (article.submittedBy?.email) {
-                emailUtils.sendStatusUpdateEmailToAuthor(article.submittedBy.email, article.articleId, article.title, 'Reviewer 2');
+            article.reviewer1Report = reviewReport;
+
+            if (decision === 'Accepted') {
+                article.status = 'Reviewer 2';
+                await article.save();
+
+                // Notify Reviewer 2
+                if (article.reviewer2?.email) {
+                    emailUtils.sendAssignmentEmailToReviewer(article.reviewer2.email, 'Reviewer 2', article.articleId, article.title);
+                }
+                // Notify Author
+                if (article.submittedBy?.email) {
+                    emailUtils.sendStatusUpdateEmailToAuthor(article.submittedBy.email, article.articleId, article.title, 'Reviewer 2');
+                }
+            } else if (decision === 'Accept with Minor Revision' || decision === 'Accept with Major Revision') {
+                article.status = 'Review Revision';
+                article.reviewRevisionStage = 'Reviewer 1';
+                article.reviewRevisionRemark = remark.trim();
+                article.reviewRevisionDecision = decision;
+                await article.save();
+
+                // Notify author to revise
+                if (article.submittedBy?.email) {
+                    emailUtils.sendReviewRevisionEmail(article.submittedBy.email, article.articleId, article.title, decision, remark.trim());
+                }
+            } else if (decision === 'Reject') {
+                // Reset to Submitted — fresh start on the same article ID
+                article.status = 'Submitted';
+                article.reviewer1Report = undefined;
+                article.reviewer2Report = undefined;
+                article.technicalReviewerReport = undefined;
+                article.reviewRevisionStage = undefined;
+                article.reviewRevisionRemark = undefined;
+                article.reviewRevisionDecision = undefined;
+                // Clear plagiarism data too for fresh start
+                article.plagiarismReport = undefined;
+                article.plagiarismPercent = undefined;
+                article.aiSimilarityReport = undefined;
+                article.aiSimilarityPercent = undefined;
+                article.plagiarismRemark = undefined;
+                article.plagiarismDecision = undefined;
+                await article.save();
+
+                if (article.submittedBy?.email) {
+                    emailUtils.sendReviewRejectionEmail(article.submittedBy.email, article.articleId, article.title, remark.trim());
+                }
             }
 
+        // ── Reviewer 2 ──
         } else if (role === 'reviewer 2') {
             if (String(article.reviewer2) !== String(req.user._id) &&
                 String(article.reviewer2?._id) !== String(req.user._id)) {
@@ -78,18 +163,52 @@ exports.forwardArticle = async (req, res) => {
             if (article.status !== 'Reviewer 2') {
                 return res.status(400).json({ message: 'This paper is not currently in Reviewer 2 stage.' });
             }
-            article.status = 'Technical Reviewer';
-            await article.save();
 
-            // Notify Technical Reviewer
-            if (article.technicalReviewer?.email) {
-                emailUtils.sendAssignmentEmailToReviewer(article.technicalReviewer.email, 'Technical Reviewer', article.articleId, article.title);
-            }
-            // Notify Author
-            if (article.submittedBy?.email) {
-                emailUtils.sendStatusUpdateEmailToAuthor(article.submittedBy.email, article.articleId, article.title, 'Technical Reviewer');
+            article.reviewer2Report = reviewReport;
+
+            if (decision === 'Accepted') {
+                article.status = 'Technical Reviewer';
+                await article.save();
+
+                // Notify Technical Reviewer
+                if (article.technicalReviewer?.email) {
+                    emailUtils.sendAssignmentEmailToReviewer(article.technicalReviewer.email, 'Technical Reviewer', article.articleId, article.title);
+                }
+                if (article.submittedBy?.email) {
+                    emailUtils.sendStatusUpdateEmailToAuthor(article.submittedBy.email, article.articleId, article.title, 'Technical Reviewer');
+                }
+            } else if (decision === 'Accept with Minor Revision' || decision === 'Accept with Major Revision') {
+                article.status = 'Review Revision';
+                article.reviewRevisionStage = 'Reviewer 2';
+                article.reviewRevisionRemark = remark.trim();
+                article.reviewRevisionDecision = decision;
+                await article.save();
+
+                if (article.submittedBy?.email) {
+                    emailUtils.sendReviewRevisionEmail(article.submittedBy.email, article.articleId, article.title, decision, remark.trim());
+                }
+            } else if (decision === 'Reject') {
+                article.status = 'Submitted';
+                article.reviewer1Report = undefined;
+                article.reviewer2Report = undefined;
+                article.technicalReviewerReport = undefined;
+                article.reviewRevisionStage = undefined;
+                article.reviewRevisionRemark = undefined;
+                article.reviewRevisionDecision = undefined;
+                article.plagiarismReport = undefined;
+                article.plagiarismPercent = undefined;
+                article.aiSimilarityReport = undefined;
+                article.aiSimilarityPercent = undefined;
+                article.plagiarismRemark = undefined;
+                article.plagiarismDecision = undefined;
+                await article.save();
+
+                if (article.submittedBy?.email) {
+                    emailUtils.sendReviewRejectionEmail(article.submittedBy.email, article.articleId, article.title, remark.trim());
+                }
             }
 
+        // ── Technical Reviewer ──
         } else if (role === 'technical reviewer') {
             if (String(article.technicalReviewer) !== String(req.user._id) &&
                 String(article.technicalReviewer?._id) !== String(req.user._id)) {
@@ -98,12 +217,45 @@ exports.forwardArticle = async (req, res) => {
             if (article.status !== 'Technical Reviewer') {
                 return res.status(400).json({ message: 'This paper is not currently in Technical Reviewer stage.' });
             }
-            article.status = 'Accepted';
-            await article.save();
 
-            // Notify Author
-            if (article.submittedBy?.email) {
-                emailUtils.sendStatusUpdateEmailToAuthor(article.submittedBy.email, article.articleId, article.title, 'Accepted');
+            article.technicalReviewerReport = reviewReport;
+
+            if (decision === 'Accepted') {
+                article.status = 'Accepted';
+                await article.save();
+
+                if (article.submittedBy?.email) {
+                    emailUtils.sendFinalAcceptanceEmail(article.submittedBy.email, article.articleId, article.title);
+                }
+            } else if (decision === 'Accept with Minor Revision' || decision === 'Accept with Major Revision') {
+                article.status = 'Review Revision';
+                article.reviewRevisionStage = 'Technical Reviewer';
+                article.reviewRevisionRemark = remark.trim();
+                article.reviewRevisionDecision = decision;
+                await article.save();
+
+                if (article.submittedBy?.email) {
+                    emailUtils.sendReviewRevisionEmail(article.submittedBy.email, article.articleId, article.title, decision, remark.trim());
+                }
+            } else if (decision === 'Reject') {
+                article.status = 'Submitted';
+                article.reviewer1Report = undefined;
+                article.reviewer2Report = undefined;
+                article.technicalReviewerReport = undefined;
+                article.reviewRevisionStage = undefined;
+                article.reviewRevisionRemark = undefined;
+                article.reviewRevisionDecision = undefined;
+                article.plagiarismReport = undefined;
+                article.plagiarismPercent = undefined;
+                article.aiSimilarityReport = undefined;
+                article.aiSimilarityPercent = undefined;
+                article.plagiarismRemark = undefined;
+                article.plagiarismDecision = undefined;
+                await article.save();
+
+                if (article.submittedBy?.email) {
+                    emailUtils.sendReviewRejectionEmail(article.submittedBy.email, article.articleId, article.title, remark.trim());
+                }
             }
 
         } else {
@@ -112,11 +264,11 @@ exports.forwardArticle = async (req, res) => {
 
         res.json({
             success: true,
-            message: `Paper forwarded successfully. New status: ${article.status}`,
+            message: `Review submitted successfully. Decision: ${decision}. New status: ${article.status}`,
             status: article.status,
         });
     } catch (error) {
-        console.error('Forward article error:', error);
-        res.status(500).json({ message: 'Server error while forwarding article.' });
+        console.error('Submit review error:', error);
+        res.status(500).json({ message: 'Server error while submitting review.' });
     }
 };

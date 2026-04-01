@@ -117,7 +117,7 @@ exports.getArticleById = async (req, res) => {
     }
 };
 
-// @desc Resubmit a paper after rejection (Revision Required)
+// @desc Resubmit a paper after plagiarism rejection (Revision Required)
 // @route PUT /api/articles/:articleId/resubmit
 // @access Private
 exports.resubmitArticle = async (req, res) => {
@@ -187,3 +187,67 @@ exports.resubmitArticle = async (req, res) => {
     }
 };
 
+// @desc Resubmit a revised paper after reviewer revision request (Review Revision)
+// @route PUT /api/articles/:articleId/resubmit-revised
+// @access Private
+exports.resubmitRevisedPaper = async (req, res) => {
+    try {
+        const article = await Article.findOne({
+            articleId: req.params.articleId,
+            submittedBy: req.user._id,
+        });
+
+        if (!article) {
+            return res.status(404).json({ message: 'Article not found.' });
+        }
+
+        if (article.status !== 'Review Revision') {
+            return res.status(400).json({ message: 'Only papers with "Review Revision" status can be revised.' });
+        }
+
+        if (!req.file) {
+            return res.status(400).json({ message: 'Please upload the revised paper file.' });
+        }
+
+        // Store old paper as revised paper (keep original paperFile as the main reference)
+        article.revisedPaperFile = req.file.path.replace(/\\/g, '/');
+        article.revisedPaperOriginalName = req.file.originalname;
+
+        // Also update the main paper file to the new version
+        article.paperFile = req.file.path.replace(/\\/g, '/');
+        article.originalFileName = req.file.originalname;
+
+        // Return to the reviewer stage that requested the revision
+        const returnStage = article.reviewRevisionStage;
+        if (returnStage) {
+            article.status = returnStage;
+        } else {
+            // Fallback — shouldn't happen but safe
+            article.status = 'Reviewer 1';
+        }
+
+        // Clear revision fields
+        article.reviewRevisionStage = undefined;
+        article.reviewRevisionRemark = undefined;
+        article.reviewRevisionDecision = undefined;
+
+        await article.save();
+
+        res.json({
+            success: true,
+            message: `Revised paper submitted. Returned to ${article.status} for re-review.`,
+            article: {
+                articleId: article.articleId,
+                title: article.title,
+                status: article.status,
+                originalFileName: article.originalFileName,
+            },
+        });
+    } catch (error) {
+        console.error('Resubmit revised paper error:', error);
+        if (req.file) {
+            try { fs.unlinkSync(req.file.path); } catch {}
+        }
+        res.status(500).json({ message: 'Server error while resubmitting revised paper.' });
+    }
+};

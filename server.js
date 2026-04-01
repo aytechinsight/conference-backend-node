@@ -47,6 +47,7 @@ const superadminRoutes = require('./routes/superadminRoutes');
 const articleRoutes = require('./routes/articleRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const reviewerRoutes = require('./routes/reviewerRoutes');
+const paymentRoutes = require('./routes/paymentRoutes');
 
 // Mount routers
 app.use('/api/auth', authRoutes);
@@ -54,6 +55,7 @@ app.use('/api/superadmin', superadminRoutes);
 app.use('/api/articles', articleRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/reviewer', reviewerRoutes);
+app.use('/api/payment', paymentRoutes);
 
 app.get('/', (req, res) => {
     res.send('API is running...');
