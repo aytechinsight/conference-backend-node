@@ -132,21 +132,14 @@ exports.submitReview = async (req, res) => {
                     emailUtils.sendReviewRevisionEmail(article.submittedBy.email, article.articleId, article.title, decision, remark.trim());
                 }
             } else if (decision === 'Reject') {
-                // Reset to Submitted — fresh start on the same article ID
-                article.status = 'Submitted';
-                article.reviewer1Report = undefined;
-                article.reviewer2Report = undefined;
-                article.technicalReviewerReport = undefined;
+                // Move to 'Reviewer Rejected' — user must resubmit fresh content on same ID
+                article.status = 'Reviewer Rejected';
+                article.reviewRejectionStage = 'Reviewer 1';
+                article.reviewRejectionRemark = remark.trim();
+                // Clear any in-progress revision fields
                 article.reviewRevisionStage = undefined;
                 article.reviewRevisionRemark = undefined;
                 article.reviewRevisionDecision = undefined;
-                // Clear plagiarism data too for fresh start
-                article.plagiarismReport = undefined;
-                article.plagiarismPercent = undefined;
-                article.aiSimilarityReport = undefined;
-                article.aiSimilarityPercent = undefined;
-                article.plagiarismRemark = undefined;
-                article.plagiarismDecision = undefined;
                 await article.save();
 
                 if (article.submittedBy?.email) {
@@ -188,19 +181,13 @@ exports.submitReview = async (req, res) => {
                     emailUtils.sendReviewRevisionEmail(article.submittedBy.email, article.articleId, article.title, decision, remark.trim());
                 }
             } else if (decision === 'Reject') {
-                article.status = 'Submitted';
-                article.reviewer1Report = undefined;
-                article.reviewer2Report = undefined;
-                article.technicalReviewerReport = undefined;
+                // Move to 'Reviewer Rejected' — user must resubmit fresh content on same ID
+                article.status = 'Reviewer Rejected';
+                article.reviewRejectionStage = 'Reviewer 2';
+                article.reviewRejectionRemark = remark.trim();
                 article.reviewRevisionStage = undefined;
                 article.reviewRevisionRemark = undefined;
                 article.reviewRevisionDecision = undefined;
-                article.plagiarismReport = undefined;
-                article.plagiarismPercent = undefined;
-                article.aiSimilarityReport = undefined;
-                article.aiSimilarityPercent = undefined;
-                article.plagiarismRemark = undefined;
-                article.plagiarismDecision = undefined;
                 await article.save();
 
                 if (article.submittedBy?.email) {
@@ -238,19 +225,13 @@ exports.submitReview = async (req, res) => {
                     emailUtils.sendReviewRevisionEmail(article.submittedBy.email, article.articleId, article.title, decision, remark.trim());
                 }
             } else if (decision === 'Reject') {
-                article.status = 'Submitted';
-                article.reviewer1Report = undefined;
-                article.reviewer2Report = undefined;
-                article.technicalReviewerReport = undefined;
+                // Move to 'Reviewer Rejected' — user must resubmit fresh content on same ID
+                article.status = 'Reviewer Rejected';
+                article.reviewRejectionStage = 'Technical Reviewer';
+                article.reviewRejectionRemark = remark.trim();
                 article.reviewRevisionStage = undefined;
                 article.reviewRevisionRemark = undefined;
                 article.reviewRevisionDecision = undefined;
-                article.plagiarismReport = undefined;
-                article.plagiarismPercent = undefined;
-                article.aiSimilarityReport = undefined;
-                article.aiSimilarityPercent = undefined;
-                article.plagiarismRemark = undefined;
-                article.plagiarismDecision = undefined;
                 await article.save();
 
                 if (article.submittedBy?.email) {

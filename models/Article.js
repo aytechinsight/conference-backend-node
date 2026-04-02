@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { getNextSequence } = require('./Counter');
 
 // Review report schema — reusable for each reviewer stage
 const ReviewReportSchema = new mongoose.Schema({
@@ -62,7 +63,7 @@ const ArticleSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['Submitted', 'Plagiarism Check', 'Revision Required', 'Reviewer 1', 'Reviewer 2', 'Technical Reviewer', 'Review Revision', 'Accepted', 'Payment', 'Published'],
+        enum: ['Submitted', 'Plagiarism Check', 'Revision Required', 'Reviewer 1', 'Reviewer 2', 'Technical Reviewer', 'Review Revision', 'Reviewer Rejected', 'Accepted', 'Payment', 'Published'],
         default: 'Submitted',
     },
     // Plagiarism check fields (filled by admin)
@@ -118,6 +119,13 @@ const ArticleSchema = new mongoose.Schema({
     reviewRevisionRemark: { type: String },
     reviewRevisionDecision: { type: String },
 
+    // ── Reviewer Rejection (hard reject by a reviewer) ──
+    reviewRejectionStage: {
+        type: String,
+        enum: ['Reviewer 1', 'Reviewer 2', 'Technical Reviewer'],
+    },
+    reviewRejectionRemark: { type: String },
+
     // Revised paper for reviewer revisions
     revisedPaperFile: { type: String },
     revisedPaperOriginalName: { type: String },
@@ -134,28 +142,38 @@ const ArticleSchema = new mongoose.Schema({
     razorpayPaymentId: { type: String },
     razorpaySignature: { type: String },
     paidAt: { type: Date },
+
+    // ── Certificate & Publication fields ──
+    certificateFile: { type: String },        // relative path to uploaded certificate file
+    publicationLink: { type: String },        // DOI / journal URL for published paper
+    certificateAttachedAt: { type: Date },    // when superadmin uploaded cert/link
+    certificateSentAt: { type: Date },        // when superadmin manually sent to author
 }, { timestamps: true });
 
-// Auto-generate articleId before saving
+// Auto-generate articleId before saving (atomic — no race conditions)
 ArticleSchema.pre('save', async function () {
     if (this.articleId) return;
 
     const currentYear = new Date().getFullYear();
-    const prefix = `ICREATE${currentYear}-ART-`;
 
-    // Find the latest article for this year
-    const latestArticle = await mongoose.model('Article')
-        .findOne({ articleId: { $regex: `^${prefix}` } })
-        .sort({ articleId: -1 })
-        .lean();
-
-    let nextNum = 1;
-    if (latestArticle) {
-        const lastNum = parseInt(latestArticle.articleId.split('-').pop(), 10);
-        if (!isNaN(lastNum)) nextNum = lastNum + 1;
+    // Resolve the submitting user's userId (e.g. USR001)
+    let userSegment = 'USR000';
+    if (this.submittedBy) {
+        try {
+            const User = mongoose.model('User');
+            const author = await User.findById(this.submittedBy).select('userId').lean();
+            if (author?.userId) {
+                userSegment = author.userId;
+            }
+        } catch (_) { /* fallback to USR000 */ }
     }
 
-    this.articleId = `${prefix}${String(nextNum).padStart(3, '0')}`;
+    // Atomically get the next article sequence number for this year
+    const counterKey = `article_counter_${currentYear}`;
+    const nextNum = await getNextSequence(counterKey);
+
+    // Format: ICREATE2026-USR001-ART-001
+    this.articleId = `ICREATE${currentYear}-${userSegment}-ART-${String(nextNum).padStart(3, '0')}`;
 });
 
 module.exports = mongoose.model('Article', ArticleSchema);

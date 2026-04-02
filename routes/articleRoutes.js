@@ -9,6 +9,7 @@ const {
     getArticleById,
     resubmitArticle,
     resubmitRevisedPaper,
+    resubmitAfterRejection,
 } = require('../controllers/articleController');
 
 // Multer storage config
@@ -48,5 +49,6 @@ router.get('/my', protect, getMyArticles);
 router.get('/:articleId', protect, getArticleById);
 router.put('/:articleId/resubmit', protect, upload.single('paperFile'), resubmitArticle);
 router.put('/:articleId/resubmit-revised', protect, upload.single('paperFile'), resubmitRevisedPaper);
+router.put('/:articleId/resubmit-after-rejection', protect, upload.single('paperFile'), resubmitAfterRejection);
 
 module.exports = router;

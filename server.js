@@ -37,6 +37,10 @@ const reportsDir = path.join(__dirname, 'uploads', 'reports');
 if (!fs.existsSync(reportsDir)) {
     fs.mkdirSync(reportsDir, { recursive: true });
 }
+const certsDir = path.join(__dirname, 'uploads', 'certificates');
+if (!fs.existsSync(certsDir)) {
+    fs.mkdirSync(certsDir, { recursive: true });
+}
 
 // Serve uploaded files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));

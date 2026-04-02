@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const { OAuth2Client } = require('google-auth-library');
+const { getNextSequence } = require('../models/Counter');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -75,6 +76,13 @@ exports.verifyOtpAndRegister = async (req, res) => {
         user.role = 'user';
         user.otp = undefined;
         user.otpExpiry = undefined;
+
+        // Assign a unique userId if not already set
+        if (!user.userId) {
+            const seq = await getNextSequence('user_counter');
+            user.userId = `USR${String(seq).padStart(3, '0')}`;
+        }
+
         await user.save();
 
         res.status(201).json({
@@ -142,9 +150,13 @@ exports.googleAuth = async (req, res) => {
                 await user.save();
             }
         } else {
+            // New Google user — assign a userId
+            const seq = await getNextSequence('user_counter');
+            const newUserId = `USR${String(seq).padStart(3, '0')}`;
             user = await User.create({
                 googleId, email, name, photo: picture,
-                isEmailVerified: true, role: 'user'
+                isEmailVerified: true, role: 'user',
+                userId: newUserId,
             });
         }
 

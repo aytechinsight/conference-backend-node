@@ -264,3 +264,93 @@ exports.deleteUser = async (req, res) => {
     }
 };
 
+// GET /api/superadmin/payments — all completed payments
+exports.getAllPayments = async (req, res) => {
+    try {
+        const payments = await Article.find({ paymentStatus: 'Completed' })
+            .populate('submittedBy', 'fullName name email userId')
+            .select('articleId title selectedPlan paymentAmount paymentCurrency razorpayPaymentId razorpayOrderId paidAt submittedBy certificateFile publicationLink certificateAttachedAt certificateSentAt')
+            .sort({ paidAt: -1 });
+
+        // Build summary
+        let totalINR = 0, totalUSD = 0;
+        for (const p of payments) {
+            if (p.paymentCurrency === 'INR') totalINR += p.paymentAmount || 0;
+            else totalUSD += p.paymentAmount || 0;
+        }
+
+        res.json({
+            success: true,
+            payments,
+            summary: { totalINR, totalUSD, count: payments.length }
+        });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// PUT /api/superadmin/articles/:articleId/certificate — upload cert + publication link
+exports.attachCertificate = async (req, res) => {
+    try {
+        const article = await Article.findOne({ articleId: req.params.articleId });
+        if (!article) return res.status(404).json({ message: 'Article not found.' });
+
+        const { publicationLink } = req.body;
+
+        if (req.file) {
+            // On Windows, req.file.path is an absolute path — extract only the 'uploads/...' portion
+            const normalizedPath = req.file.path.replace(/\\/g, '/');
+            const uploadsIndex = normalizedPath.indexOf('uploads/');
+            article.certificateFile = uploadsIndex >= 0
+                ? normalizedPath.substring(uploadsIndex)
+                : normalizedPath;
+        }
+        if (publicationLink !== undefined) {
+            article.publicationLink = publicationLink.trim() || undefined;
+        }
+        article.certificateAttachedAt = new Date();
+        await article.save();
+
+        res.json({ success: true, message: 'Certificate and/or publication link saved.', article });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// POST /api/superadmin/articles/:articleId/send-certificate — manually send cert email to author
+exports.sendCertificateToAuthor = async (req, res) => {
+    try {
+        const article = await Article.findOne({ articleId: req.params.articleId })
+            .populate('submittedBy', 'fullName name email');
+
+        if (!article) return res.status(404).json({ message: 'Article not found.' });
+        if (!article.submittedBy?.email) return res.status(400).json({ message: 'No author email on file.' });
+
+        if (!article.certificateFile && !article.publicationLink) {
+            return res.status(400).json({ message: 'Please attach a certificate or publication link before sending.' });
+        }
+
+        const authorName = article.submittedBy.fullName || article.submittedBy.name || 'Author';
+        const baseUrl = process.env.BACKEND_URL || 'http://localhost:5000';
+        const certUrl = article.certificateFile ? `${baseUrl}/${article.certificateFile}` : null;
+
+        await emailUtils.sendCertificateEmail(
+            article.submittedBy.email,
+            authorName,
+            article.articleId,
+            article.title,
+            article.publicationLink || null,
+            certUrl
+        );
+
+        article.certificateSentAt = new Date();
+        article.status = 'Published';
+        await article.save();
+
+        res.json({ success: true, message: `Certificate email sent to ${article.submittedBy.email}.` });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+

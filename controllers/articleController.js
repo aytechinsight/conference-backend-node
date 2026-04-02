@@ -251,3 +251,123 @@ exports.resubmitRevisedPaper = async (req, res) => {
         res.status(500).json({ message: 'Server error while resubmitting revised paper.' });
     }
 };
+
+// @desc Resubmit a fresh paper after reviewer hard-rejection (Reviewer Rejected)
+// @route PUT /api/articles/:articleId/resubmit-after-rejection
+// @access Private
+exports.resubmitAfterRejection = async (req, res) => {
+    try {
+        const { title, correspondingAuthorName, numberOfAuthors, authors, plagiarismDeclared } = req.body;
+
+        // Validate required fields
+        if (!title || !correspondingAuthorName || !numberOfAuthors || !authors || !plagiarismDeclared) {
+            if (req.file) try { fs.unlinkSync(req.file.path); } catch {}
+            return res.status(400).json({ message: 'All fields are required.' });
+        }
+
+        if (!req.file) {
+            return res.status(400).json({ message: 'Please upload the new paper file.' });
+        }
+
+        // Parse authors
+        let parsedAuthors;
+        try {
+            parsedAuthors = typeof authors === 'string' ? JSON.parse(authors) : authors;
+        } catch {
+            if (req.file) try { fs.unlinkSync(req.file.path); } catch {}
+            return res.status(400).json({ message: 'Invalid authors data format.' });
+        }
+
+        if (!Array.isArray(parsedAuthors) || parsedAuthors.length === 0) {
+            if (req.file) try { fs.unlinkSync(req.file.path); } catch {}
+            return res.status(400).json({ message: 'Please provide at least one author.' });
+        }
+
+        for (const author of parsedAuthors) {
+            if (!author.name || !author.email) {
+                if (req.file) try { fs.unlinkSync(req.file.path); } catch {}
+                return res.status(400).json({ message: 'Each author must have a name and email.' });
+            }
+        }
+
+        const article = await Article.findOne({
+            articleId: req.params.articleId,
+            submittedBy: req.user._id,
+        });
+
+        if (!article) {
+            return res.status(404).json({ message: 'Article not found.' });
+        }
+
+        if (article.status !== 'Reviewer Rejected') {
+            return res.status(400).json({ message: 'Only papers with "Reviewer Rejected" status can be resubmitted here.' });
+        }
+
+        // Archive current submission into revision history
+        article.revisionHistory.push({
+            paperFile: article.paperFile,
+            originalFileName: article.originalFileName,
+            plagiarismReport: article.plagiarismReport,
+            plagiarismPercent: article.plagiarismPercent,
+            aiSimilarityReport: article.aiSimilarityReport,
+            aiSimilarityPercent: article.aiSimilarityPercent,
+            plagiarismRemark: article.plagiarismRemark,
+            plagiarismDecision: article.plagiarismDecision,
+            resubmittedAt: new Date(),
+        });
+
+        // Update paper metadata with fresh submission data
+        article.title = title.trim();
+        article.correspondingAuthor = {
+            name: correspondingAuthorName.trim(),
+            email: req.user.email,
+        };
+        article.numberOfAuthors = parseInt(numberOfAuthors, 10);
+        article.authors = parsedAuthors;
+        article.plagiarismDeclared = plagiarismDeclared === 'true' || plagiarismDeclared === true;
+
+        // Replace paper file
+        article.paperFile = req.file.path.replace(/\\/g, '/');
+        article.originalFileName = req.file.originalname;
+
+        // Clear ALL reviewer data — paper goes through the full process again
+        article.reviewer1Report = undefined;
+        article.reviewer2Report = undefined;
+        article.technicalReviewerReport = undefined;
+        article.reviewRevisionStage = undefined;
+        article.reviewRevisionRemark = undefined;
+        article.reviewRevisionDecision = undefined;
+        article.reviewRejectionStage = undefined;
+        article.reviewRejectionRemark = undefined;
+
+        // Clear plagiarism data — admin must re-check the new file
+        article.plagiarismReport = undefined;
+        article.plagiarismPercent = undefined;
+        article.aiSimilarityReport = undefined;
+        article.aiSimilarityPercent = undefined;
+        article.plagiarismRemark = undefined;
+        article.plagiarismDecision = undefined;
+
+        // Reset to Submitted for fresh plagiarism check + review pipeline
+        article.status = 'Submitted';
+        await article.save();
+
+        res.json({
+            success: true,
+            message: 'Paper resubmitted successfully. It will go through the full review process again.',
+            article: {
+                articleId: article.articleId,
+                title: article.title,
+                status: article.status,
+                originalFileName: article.originalFileName,
+            },
+        });
+    } catch (error) {
+        console.error('Resubmit after rejection error:', error);
+        if (req.file) {
+            try { fs.unlinkSync(req.file.path); } catch {}
+        }
+        res.status(500).json({ message: 'Server error while resubmitting paper.' });
+    }
+};
+

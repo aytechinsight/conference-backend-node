@@ -125,14 +125,19 @@ exports.verifyPayment = async (req, res) => {
         article.status = 'Payment';
         await article.save();
 
-        // Notify author
+        // Notify author with rich receipt
         if (article.submittedBy?.email) {
-            const symbol = article.paymentCurrency === 'INR' ? '₹' : '$';
-            emailUtils.sendPaymentConfirmationEmail(
+            const authorName = article.submittedBy.fullName || article.submittedBy.name || 'Author';
+            emailUtils.sendPaymentReceiptEmail(
                 article.submittedBy.email,
+                authorName,
                 article.articleId,
                 article.title,
-                `${symbol}${article.paymentAmount}`
+                article.selectedPlan,
+                article.paymentAmount,
+                article.paymentCurrency,
+                razorpay_payment_id,
+                article.paidAt
             );
         }
 

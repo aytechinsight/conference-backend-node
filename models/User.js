@@ -19,6 +19,12 @@ const UserSchema = new mongoose.Schema({
         enum: ['user', 'superadmin', 'reviewer 1', 'reviewer 2', 'technical reviewer'],
         default: 'user'
     },
+    // Short sequential user ID embedded in article IDs (e.g. USR001)
+    userId: {
+        type: String,
+        unique: true,
+        sparse: true, // allows null for old records without a userId
+    },
     googleId: { type: String },
     isEmailVerified: { type: Boolean, default: false },
     otp: { type: String, select: false },
