@@ -1,6 +1,7 @@
 const Article = require('../models/Article');
 const User = require('../models/User');
 const emailUtils = require('../utils/emailUtils');
+const notifUtils = require('../utils/notificationUtils');
 const path = require('path');
 const fs = require('fs');
 
@@ -57,6 +58,11 @@ exports.submitArticle = async (req, res) => {
             plagiarismDeclared: plagiarismDeclared === 'true' || plagiarismDeclared === true,
             submittedBy: req.user._id,
         });
+
+        // In-app notification — paper submitted
+        notifUtils.notifySubmitted(req.user.email, article.articleId, article.title);
+        // Notify superadmins of new submission
+        notifUtils.notifySuperadminNewSubmission(article.articleId, article.title, req.user.fullName || req.user.name);
 
         res.status(201).json({
             success: true,
@@ -195,7 +201,10 @@ exports.resubmitRevisedPaper = async (req, res) => {
         const article = await Article.findOne({
             articleId: req.params.articleId,
             submittedBy: req.user._id,
-        });
+        })
+            .populate('reviewer1', 'email name fullName')
+            .populate('reviewer2', 'email name fullName')
+            .populate('technicalReviewer', 'email name fullName');
 
         if (!article) {
             return res.status(404).json({ message: 'Article not found.' });
@@ -209,21 +218,70 @@ exports.resubmitRevisedPaper = async (req, res) => {
             return res.status(400).json({ message: 'Please upload the revised paper file.' });
         }
 
-        // Store old paper as revised paper (keep original paperFile as the main reference)
-        article.revisedPaperFile = req.file.path.replace(/\\/g, '/');
-        article.revisedPaperOriginalName = req.file.originalname;
+        const newFilePathNorm = req.file.path.replace(/\\/g, '/');
 
-        // Also update the main paper file to the new version
-        article.paperFile = req.file.path.replace(/\\/g, '/');
-        article.originalFileName = req.file.originalname;
+        // Capture the ORIGINAL file references BEFORE overwriting them (needed for history)
+        const originalPaperFileBeforeRevision = article.paperFile;
+        const originalFileNameBeforeRevision = article.originalFileName;
 
         // Return to the reviewer stage that requested the revision
         const returnStage = article.reviewRevisionStage;
+
+        // ── Archive the current reviewer report into revision history BEFORE clearing ──
+        // This lets the reviewer see their previous review, the original paper, and the
+        // revised paper side-by-side when the paper comes back for re-review.
+        let oldReport = null;
+        if (returnStage === 'Reviewer 1') {
+            oldReport = article.reviewer1Report;
+        } else if (returnStage === 'Reviewer 2') {
+            oldReport = article.reviewer2Report;
+        } else if (returnStage === 'Technical Reviewer') {
+            oldReport = article.technicalReviewerReport;
+        }
+
+        if (oldReport) {
+            article.reviewerRevisionHistory.push({
+                stage: returnStage,
+                decision: oldReport.decision,
+                remark: oldReport.remark,
+                scores: oldReport.scores ? (oldReport.scores.toObject ? oldReport.scores.toObject() : oldReport.scores) : undefined,
+                reviewedAt: oldReport.reviewedAt,
+                originalPaperFile: originalPaperFileBeforeRevision,  // the file the reviewer actually reviewed
+                originalFileName: originalFileNameBeforeRevision,
+                revisedPaperFile: newFilePathNorm,                    // the new revised file from author
+                revisedPaperOriginalName: req.file.originalname,
+                revisedAt: new Date(),
+            });
+        }
+
+        // Store new file references
+        article.revisedPaperFile = newFilePathNorm;
+        article.revisedPaperOriginalName = req.file.originalname;
+
+        // Update the main paper file to the new (revised) version
+        article.paperFile = newFilePathNorm;
+        article.originalFileName = req.file.originalname;
+
         if (returnStage) {
             article.status = returnStage;
         } else {
             // Fallback — shouldn't happen but safe
             article.status = 'Reviewer 1';
+        }
+
+        // Clear the old reviewer report for the stage that sent it back,
+        // so the reviewer gets a fresh review form for the revised paper.
+        // NOTE: Must use null + markModified, as assigning `undefined` to a
+        // Mongoose sub-document does not reliably persist the unset to MongoDB.
+        if (returnStage === 'Reviewer 1') {
+            article.reviewer1Report = null;
+            article.markModified('reviewer1Report');
+        } else if (returnStage === 'Reviewer 2') {
+            article.reviewer2Report = null;
+            article.markModified('reviewer2Report');
+        } else if (returnStage === 'Technical Reviewer') {
+            article.technicalReviewerReport = null;
+            article.markModified('technicalReviewerReport');
         }
 
         // Clear revision fields
@@ -232,6 +290,19 @@ exports.resubmitRevisedPaper = async (req, res) => {
         article.reviewRevisionDecision = undefined;
 
         await article.save();
+
+        // Notify the reviewer that the revised paper is back for re-review
+        let reviewerEmail = null;
+        if (returnStage === 'Reviewer 1' && article.reviewer1?.email) {
+            reviewerEmail = article.reviewer1.email;
+        } else if (returnStage === 'Reviewer 2' && article.reviewer2?.email) {
+            reviewerEmail = article.reviewer2.email;
+        } else if (returnStage === 'Technical Reviewer' && article.technicalReviewer?.email) {
+            reviewerEmail = article.technicalReviewer.email;
+        }
+        if (reviewerEmail) {
+            notifUtils.notifyReviewerPaperResubmitted(reviewerEmail, returnStage, article.articleId, article.title);
+        }
 
         res.json({
             success: true,

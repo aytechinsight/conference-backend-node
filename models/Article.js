@@ -130,6 +130,34 @@ const ArticleSchema = new mongoose.Schema({
     revisedPaperFile: { type: String },
     revisedPaperOriginalName: { type: String },
 
+    // ── Reviewer Revision Cycle History ──
+    // Each entry captures one full revision cycle: the reviewer's report that
+    // requested the revision, the paper that was reviewed, and the revised
+    // paper the author uploaded in response. Allows reviewers to see full context.
+    reviewerRevisionHistory: [{
+        stage: { type: String }, // 'Reviewer 1', 'Reviewer 2', 'Technical Reviewer'
+        decision: { type: String }, // 'Accept with Minor Revision' | 'Accept with Major Revision'
+        remark: { type: String },
+        scores: {
+            abstractQuality: String,
+            originalityNovelty: String,
+            technicalMethodology: String,
+            experimentalResults: String,
+            technicalDiscussion: String,
+            figureTableQuality: String,
+            referenceQuality: String,
+            languageFormatting: String,
+            innovationClarity: String,
+            conclusionStrength: String,
+        },
+        reviewedAt: { type: Date },           // when the reviewer submitted this report
+        originalPaperFile: { type: String },  // the paper that was reviewed
+        originalFileName: { type: String },
+        revisedPaperFile: { type: String },   // the revised paper author uploaded
+        revisedPaperOriginalName: { type: String },
+        revisedAt: { type: Date },            // when author submitted the revised paper
+    }],
+
     // ── Payment fields ──
     selectedPlan: { type: String }, // e.g. "Peer Reviewed Journal - Indian", "Scopus Student - Indian", etc.
     paymentAmount: { type: Number },

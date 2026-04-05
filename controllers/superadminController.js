@@ -3,6 +3,7 @@ const Article = require('../models/Article');
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
 const emailUtils = require('../utils/emailUtils');
+const notifUtils = require('../utils/notificationUtils');
 
 const REVIEWER_ROLES = ['reviewer 1', 'reviewer 2', 'technical reviewer'];
 
@@ -346,6 +347,10 @@ exports.sendCertificateToAuthor = async (req, res) => {
         article.certificateSentAt = new Date();
         article.status = 'Published';
         await article.save();
+
+        // In-app notification
+        notifUtils.notifyCertificateReady(article.submittedBy.email, article.articleId, article.title);
+        notifUtils.notifyPublished(article.submittedBy.email, article.articleId, article.title);
 
         res.json({ success: true, message: `Certificate email sent to ${article.submittedBy.email}.` });
     } catch (error) {

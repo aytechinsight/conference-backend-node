@@ -2,6 +2,7 @@ const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const Article = require('../models/Article');
 const emailUtils = require('../utils/emailUtils');
+const notifUtils = require('../utils/notificationUtils');
 
 const razorpay = new Razorpay({
     key_id: process.env.RAZORPAY_KEY_ID,
@@ -51,7 +52,7 @@ exports.createOrder = async (req, res) => {
         const order = await razorpay.orders.create({
             amount: amountInSmallest,
             currency: plan.currency,
-            receipt: `rcpt_${article.articleId}_${Date.now()}`,
+            receipt: `r_${article.articleId}_${Date.now()}`.slice(0, 40),
             notes: {
                 articleId: article.articleId,
                 title: article.title,
@@ -139,6 +140,9 @@ exports.verifyPayment = async (req, res) => {
                 razorpay_payment_id,
                 article.paidAt
             );
+            notifUtils.notifyPaymentVerified(article.submittedBy.email, article.articleId, article.title);
+            // Notify superadmins of payment
+            notifUtils.notifySuperadminPaymentReceived(article.articleId, article.title, authorName);
         }
 
         res.json({

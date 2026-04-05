@@ -1,6 +1,7 @@
 const Article = require('../models/Article');
 const User = require('../models/User');
 const emailUtils = require('../utils/emailUtils');
+const notifUtils = require('../utils/notificationUtils');
 
 // @desc  Get all articles (for admin overview)
 // @route GET /api/admin/articles
@@ -78,14 +79,18 @@ exports.assignReviewers = async (req, res) => {
         article.status = 'Reviewer 1';
         await article.save();
 
-        // Send notifications to all assigned reviewers
+        // Send emails + in-app notifications to assigned reviewers
         emailUtils.sendAssignmentEmailToReviewer(r1.email, 'Reviewer 1', article.articleId, article.title);
         emailUtils.sendAssignmentEmailToReviewer(r2.email, 'Reviewer 2', article.articleId, article.title);
         emailUtils.sendAssignmentEmailToReviewer(tr.email, 'Technical Reviewer', article.articleId, article.title);
+        notifUtils.notifyReviewerPaperAssigned(r1.email, 'Reviewer 1', article.articleId, article.title);
+        notifUtils.notifyReviewerPaperAssigned(r2.email, 'Reviewer 2', article.articleId, article.title);
+        notifUtils.notifyReviewerPaperAssigned(tr.email, 'Technical Reviewer', article.articleId, article.title);
 
         // Notify the author
         if (article.submittedBy?.email) {
             emailUtils.sendAssignmentEmailToAuthor(article.submittedBy.email, article.articleId, article.title);
+            notifUtils.notifyReviewerAssigned(article.submittedBy.email, article.articleId, article.title);
         }
 
         res.json({
@@ -184,6 +189,8 @@ exports.submitPlagiarismCheck = async (req, res) => {
             // Notify author
             if (article.submittedBy?.email) {
                 emailUtils.sendPlagiarismAcceptedEmail(article.submittedBy.email, article.articleId, article.title);
+                notifUtils.notifyPlagiarismPassed(article.submittedBy.email, article.articleId, article.title);
+                notifUtils.notifyStatusUpdate(article.submittedBy.email, article.articleId, article.title, 'Reviewer 1');
             }
 
             res.json({
@@ -200,6 +207,7 @@ exports.submitPlagiarismCheck = async (req, res) => {
             // Notify author
             if (article.submittedBy?.email) {
                 emailUtils.sendPlagiarismRejectionEmail(article.submittedBy.email, article.articleId, article.title, remark);
+                notifUtils.notifyRevisionRequired(article.submittedBy.email, article.articleId, article.title, remark);
             }
 
             res.json({

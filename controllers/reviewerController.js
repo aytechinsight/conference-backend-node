@@ -1,6 +1,7 @@
 const Article = require('../models/Article');
 const User = require('../models/User');
 const emailUtils = require('../utils/emailUtils');
+const notifUtils = require('../utils/notificationUtils');
 
 const SCORE_FIELDS = [
     'abstractQuality',
@@ -115,10 +116,12 @@ exports.submitReview = async (req, res) => {
                 // Notify Reviewer 2
                 if (article.reviewer2?.email) {
                     emailUtils.sendAssignmentEmailToReviewer(article.reviewer2.email, 'Reviewer 2', article.articleId, article.title);
+                    notifUtils.notifyReviewerTurn(article.reviewer2.email, 'Reviewer 2', article.articleId, article.title);
                 }
                 // Notify Author
                 if (article.submittedBy?.email) {
                     emailUtils.sendStatusUpdateEmailToAuthor(article.submittedBy.email, article.articleId, article.title, 'Reviewer 2');
+                    notifUtils.notifyStatusUpdate(article.submittedBy.email, article.articleId, article.title, 'Reviewer 2');
                 }
             } else if (decision === 'Accept with Minor Revision' || decision === 'Accept with Major Revision') {
                 article.status = 'Review Revision';
@@ -130,6 +133,7 @@ exports.submitReview = async (req, res) => {
                 // Notify author to revise
                 if (article.submittedBy?.email) {
                     emailUtils.sendReviewRevisionEmail(article.submittedBy.email, article.articleId, article.title, decision, remark.trim());
+                    notifUtils.notifyReviewRevision(article.submittedBy.email, article.articleId, article.title, decision, remark.trim());
                 }
             } else if (decision === 'Reject') {
                 // Move to 'Reviewer Rejected' — user must resubmit fresh content on same ID
@@ -144,6 +148,7 @@ exports.submitReview = async (req, res) => {
 
                 if (article.submittedBy?.email) {
                     emailUtils.sendReviewRejectionEmail(article.submittedBy.email, article.articleId, article.title, remark.trim());
+                    notifUtils.notifyReviewRejection(article.submittedBy.email, article.articleId, article.title, remark.trim());
                 }
             }
 
@@ -166,9 +171,11 @@ exports.submitReview = async (req, res) => {
                 // Notify Technical Reviewer
                 if (article.technicalReviewer?.email) {
                     emailUtils.sendAssignmentEmailToReviewer(article.technicalReviewer.email, 'Technical Reviewer', article.articleId, article.title);
+                    notifUtils.notifyReviewerTurn(article.technicalReviewer.email, 'Technical Reviewer', article.articleId, article.title);
                 }
                 if (article.submittedBy?.email) {
                     emailUtils.sendStatusUpdateEmailToAuthor(article.submittedBy.email, article.articleId, article.title, 'Technical Reviewer');
+                    notifUtils.notifyStatusUpdate(article.submittedBy.email, article.articleId, article.title, 'Technical Reviewer');
                 }
             } else if (decision === 'Accept with Minor Revision' || decision === 'Accept with Major Revision') {
                 article.status = 'Review Revision';
@@ -179,6 +186,7 @@ exports.submitReview = async (req, res) => {
 
                 if (article.submittedBy?.email) {
                     emailUtils.sendReviewRevisionEmail(article.submittedBy.email, article.articleId, article.title, decision, remark.trim());
+                    notifUtils.notifyReviewRevision(article.submittedBy.email, article.articleId, article.title, decision, remark.trim());
                 }
             } else if (decision === 'Reject') {
                 // Move to 'Reviewer Rejected' — user must resubmit fresh content on same ID
@@ -192,6 +200,7 @@ exports.submitReview = async (req, res) => {
 
                 if (article.submittedBy?.email) {
                     emailUtils.sendReviewRejectionEmail(article.submittedBy.email, article.articleId, article.title, remark.trim());
+                    notifUtils.notifyReviewRejection(article.submittedBy.email, article.articleId, article.title, remark.trim());
                 }
             }
 
@@ -213,7 +222,10 @@ exports.submitReview = async (req, res) => {
 
                 if (article.submittedBy?.email) {
                     emailUtils.sendFinalAcceptanceEmail(article.submittedBy.email, article.articleId, article.title);
+                    notifUtils.notifyFinalAcceptance(article.submittedBy.email, article.articleId, article.title);
                 }
+                // Notify superadmins
+                notifUtils.notifySuperadminPaperAccepted(article.articleId, article.title);
             } else if (decision === 'Accept with Minor Revision' || decision === 'Accept with Major Revision') {
                 article.status = 'Review Revision';
                 article.reviewRevisionStage = 'Technical Reviewer';
@@ -223,6 +235,7 @@ exports.submitReview = async (req, res) => {
 
                 if (article.submittedBy?.email) {
                     emailUtils.sendReviewRevisionEmail(article.submittedBy.email, article.articleId, article.title, decision, remark.trim());
+                    notifUtils.notifyReviewRevision(article.submittedBy.email, article.articleId, article.title, decision, remark.trim());
                 }
             } else if (decision === 'Reject') {
                 // Move to 'Reviewer Rejected' — user must resubmit fresh content on same ID
@@ -236,6 +249,7 @@ exports.submitReview = async (req, res) => {
 
                 if (article.submittedBy?.email) {
                     emailUtils.sendReviewRejectionEmail(article.submittedBy.email, article.articleId, article.title, remark.trim());
+                    notifUtils.notifyReviewRejection(article.submittedBy.email, article.articleId, article.title, remark.trim());
                 }
             }
 
