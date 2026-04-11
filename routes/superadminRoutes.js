@@ -10,14 +10,16 @@ const {
     createReviewer,
     deleteUser,
     getAllPayments,
-    attachCertificate,
-    sendCertificateToAuthor,
+    attachAuthorCertificate,
+    attachPublicationLink,
+    sendCertificatesToAuthors,
 } = require('../controllers/superadminController');
+const { sendNewsletter } = require('../controllers/newsletterController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 
 const superadminOnly = [protect, authorize('superadmin')];
 
-// Multer storage for certificates
+// Multer storage for per-author certificates
 const certStorage = multer.diskStorage({
     destination: (req, file, cb) => {
         const dir = path.join(__dirname, '..', 'uploads', 'certificates');
@@ -31,7 +33,7 @@ const certStorage = multer.diskStorage({
 });
 const uploadCert = multer({
     storage: certStorage,
-    limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+    limits: { fileSize: 20 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
         const allowed = ['.pdf', '.png', '.jpg', '.jpeg'];
         if (allowed.includes(path.extname(file.originalname).toLowerCase())) cb(null, true);
@@ -44,9 +46,24 @@ router.get('/users', ...superadminOnly, getAllUsers);
 router.post('/create-reviewer', ...superadminOnly, createReviewer);
 router.delete('/users/:id', ...superadminOnly, deleteUser);
 
-// Payment routes
+// Payment & certificate routes
 router.get('/payments', ...superadminOnly, getAllPayments);
-router.put('/articles/:articleId/certificate', ...superadminOnly, uploadCert.single('certificateFile'), attachCertificate);
-router.post('/articles/:articleId/send-certificate', ...superadminOnly, sendCertificateToAuthor);
+
+// Upload certificate for a specific author (authorIndex in body)
+router.put(
+    '/articles/:articleId/author-certificate',
+    ...superadminOnly,
+    uploadCert.single('certificateFile'),
+    attachAuthorCertificate
+);
+
+// Save / update the publication link (no file)
+router.put('/articles/:articleId/publication-link', ...superadminOnly, attachPublicationLink);
+
+// Send certificates to all authors + mark as Published
+router.post('/articles/:articleId/send-certificates', ...superadminOnly, sendCertificatesToAuthors);
+
+// Newsletter
+router.post('/newsletter', ...superadminOnly, sendNewsletter);
 
 module.exports = router;

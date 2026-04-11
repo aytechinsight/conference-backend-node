@@ -1,6 +1,7 @@
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const Article = require('../models/Article');
+const SiteConfig = require('../models/SiteConfig');
 const emailUtils = require('../utils/emailUtils');
 const notifUtils = require('../utils/notificationUtils');
 
@@ -9,15 +10,15 @@ const razorpay = new Razorpay({
     key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
-// Registration plans with amounts
-const PLANS = {
-    'Peer Reviewed Journal - Indian': { amount: 2800, currency: 'INR' },
-    'Scopus Student - Indian': { amount: 8000, currency: 'INR' },
-    'Scopus Faculty - Indian': { amount: 9500, currency: 'INR' },
-    'Peer Reviewed Journal - International': { amount: 70, currency: 'USD' },
-    'Scopus Student - International': { amount: 120, currency: 'USD' },
-    'Scopus Faculty - International': { amount: 150, currency: 'USD' },
-};
+// Build PLANS map from DB (falls back to hardcoded defaults if DB is empty)
+async function getPlansMap() {
+    const config = await SiteConfig.getOrCreate();
+    const map = {};
+    for (const plan of config.paymentPlans) {
+        map[plan.key] = { amount: plan.amount, currency: plan.currency };
+    }
+    return map;
+}
 
 // @desc  Create Razorpay order for an accepted article
 // @route POST /api/payment/create-order/:articleId
@@ -25,6 +26,7 @@ const PLANS = {
 exports.createOrder = async (req, res) => {
     try {
         const { planKey } = req.body;
+        const PLANS = await getPlansMap();
 
         if (!planKey || !PLANS[planKey]) {
             return res.status(400).json({
@@ -159,6 +161,12 @@ exports.verifyPayment = async (req, res) => {
 // @desc  Get available plans
 // @route GET /api/payment/plans
 // @access Public
-exports.getPlans = (req, res) => {
-    res.json({ success: true, plans: PLANS });
+exports.getPlans = async (req, res) => {
+    try {
+        const PLANS = await getPlansMap();
+        res.json({ success: true, plans: PLANS });
+    } catch (error) {
+        console.error('Get plans error:', error);
+        res.status(500).json({ message: 'Server error while fetching plans.' });
+    }
 };

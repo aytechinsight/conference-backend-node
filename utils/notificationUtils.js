@@ -6,6 +6,7 @@
 
 const Notification = require('../models/Notification');
 const User = require('../models/User');
+const pushUtils = require('./pushUtils');
 
 /**
  * Create a notification for a user identified by their email address.
@@ -23,6 +24,8 @@ const createNotificationForEmail = async (email, { type, title, message, article
             articleId,
             articleTitle,
         });
+        // Fire push notification (silently — never blocks main flow)
+        pushUtils.sendPushToUser(user._id, { type, title, message, articleId });
     } catch (err) {
         console.error('Failed to create notification:', err.message);
     }
@@ -41,6 +44,8 @@ const createNotificationForUser = async (userId, { type, title, message, article
             articleId,
             articleTitle,
         });
+        // Fire push notification (silently — never blocks main flow)
+        pushUtils.sendPushToUser(userId, { type, title, message, articleId });
     } catch (err) {
         console.error('Failed to create notification:', err.message);
     }

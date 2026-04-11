@@ -45,14 +45,17 @@ exports.getReviewers = async (req, res) => {
 };
 
 // @desc  Assign reviewers to an article
+//        Technical Reviewer (for plagiarism) + Reviewer 1 are required.
+//        Reviewer 2 is optional.
+//        Status moves to 'Plagiarism Check' so TR can start immediately.
 // @route PUT /api/admin/articles/:id/assign
 // @access Private (admin only)
 exports.assignReviewers = async (req, res) => {
     try {
         const { reviewer1Id, reviewer2Id, technicalReviewerId } = req.body;
 
-        if (!reviewer1Id || !reviewer2Id || !technicalReviewerId) {
-            return res.status(400).json({ message: 'All three reviewer IDs are required.' });
+        if (!reviewer1Id || !technicalReviewerId) {
+            return res.status(400).json({ message: 'Technical Reviewer and Reviewer 1 are required.' });
         }
 
         const article = await Article.findById(req.params.id)
@@ -62,30 +65,42 @@ exports.assignReviewers = async (req, res) => {
             return res.status(404).json({ message: 'Article not found.' });
         }
 
-        // Verify all reviewer users exist and have correct roles
-        const [r1, r2, tr] = await Promise.all([
+        // Verify required reviewer roles
+        const [r1, tr] = await Promise.all([
             User.findOne({ _id: reviewer1Id, role: 'reviewer 1' }),
-            User.findOne({ _id: reviewer2Id, role: 'reviewer 2' }),
             User.findOne({ _id: technicalReviewerId, role: 'technical reviewer' }),
         ]);
 
         if (!r1) return res.status(400).json({ message: 'Invalid Reviewer 1 selection.' });
-        if (!r2) return res.status(400).json({ message: 'Invalid Reviewer 2 selection.' });
         if (!tr) return res.status(400).json({ message: 'Invalid Technical Reviewer selection.' });
 
+        // Reviewer 2 is optional
+        let r2 = null;
+        if (reviewer2Id) {
+            r2 = await User.findOne({ _id: reviewer2Id, role: 'reviewer 2' });
+            if (!r2) return res.status(400).json({ message: 'Invalid Reviewer 2 selection.' });
+        }
+
         article.reviewer1 = r1._id;
-        article.reviewer2 = r2._id;
+        article.reviewer2 = r2 ? r2._id : undefined;
         article.technicalReviewer = tr._id;
-        article.status = 'Reviewer 1';
+        // Move to Plagiarism Check so TR can start their work
+        article.status = 'Plagiarism Check';
         await article.save();
 
-        // Send emails + in-app notifications to assigned reviewers
-        emailUtils.sendAssignmentEmailToReviewer(r1.email, 'Reviewer 1', article.articleId, article.title);
-        emailUtils.sendAssignmentEmailToReviewer(r2.email, 'Reviewer 2', article.articleId, article.title);
+        // Notify Technical Reviewer (they go first — plagiarism check)
         emailUtils.sendAssignmentEmailToReviewer(tr.email, 'Technical Reviewer', article.articleId, article.title);
-        notifUtils.notifyReviewerPaperAssigned(r1.email, 'Reviewer 1', article.articleId, article.title);
-        notifUtils.notifyReviewerPaperAssigned(r2.email, 'Reviewer 2', article.articleId, article.title);
         notifUtils.notifyReviewerPaperAssigned(tr.email, 'Technical Reviewer', article.articleId, article.title);
+
+        // Notify Reviewer 1 (assigned but will review after TR accepts)
+        emailUtils.sendAssignmentEmailToReviewer(r1.email, 'Reviewer 1', article.articleId, article.title);
+        notifUtils.notifyReviewerPaperAssigned(r1.email, 'Reviewer 1', article.articleId, article.title);
+
+        // Notify Reviewer 2 if assigned
+        if (r2) {
+            emailUtils.sendAssignmentEmailToReviewer(r2.email, 'Reviewer 2', article.articleId, article.title);
+            notifUtils.notifyReviewerPaperAssigned(r2.email, 'Reviewer 2', article.articleId, article.title);
+        }
 
         // Notify the author
         if (article.submittedBy?.email) {
@@ -95,129 +110,10 @@ exports.assignReviewers = async (req, res) => {
 
         res.json({
             success: true,
-            message: 'Reviewers assigned successfully. Status moved to Reviewer 1.',
+            message: 'Reviewers assigned successfully. Status moved to Plagiarism Check.',
         });
     } catch (error) {
         console.error('Assign reviewers error:', error);
         res.status(500).json({ message: 'Server error while assigning reviewers.' });
-    }
-};
-
-// @desc  Submit plagiarism check for an article
-// @route PUT /api/admin/articles/:id/plagiarism-check
-// @access Private (admin only)
-exports.submitPlagiarismCheck = async (req, res) => {
-    try {
-        const { plagiarismPercent, aiSimilarityPercent, remark, decision } = req.body;
-
-        if (!decision || !['Accept', 'Reject'].includes(decision)) {
-            return res.status(400).json({ message: 'Decision must be either Accept or Reject.' });
-        }
-
-        if (!req.files?.plagiarismReport?.[0]) {
-            return res.status(400).json({ message: 'Plagiarism Report file is required.' });
-        }
-        if (!plagiarismPercent && plagiarismPercent !== '0') {
-            return res.status(400).json({ message: 'Plagiarism % is required.' });
-        }
-        if (!req.files?.aiSimilarityReport?.[0]) {
-            return res.status(400).json({ message: 'AI Similarity Report file is required.' });
-        }
-        if (!aiSimilarityPercent && aiSimilarityPercent !== '0') {
-            return res.status(400).json({ message: 'AI Similarity % is required.' });
-        }
-        if (!remark || !remark.trim()) {
-            return res.status(400).json({ message: 'Remark is required.' });
-        }
-
-        const article = await Article.findById(req.params.id)
-            .populate('submittedBy', 'email fullName name');
-
-        if (!article) {
-            return res.status(404).json({ message: 'Article not found.' });
-        }
-
-        if (article.status !== 'Submitted') {
-            return res.status(400).json({ message: 'Plagiarism check can only be done on papers with Submitted status.' });
-        }
-
-        // Save uploaded report file paths
-        if (req.files?.plagiarismReport?.[0]) {
-            article.plagiarismReport = req.files.plagiarismReport[0].path.replace(/\\/g, '/');
-        }
-        if (req.files?.aiSimilarityReport?.[0]) {
-            article.aiSimilarityReport = req.files.aiSimilarityReport[0].path.replace(/\\/g, '/');
-        }
-
-        article.plagiarismPercent = plagiarismPercent ? parseFloat(plagiarismPercent) : undefined;
-        article.aiSimilarityPercent = aiSimilarityPercent ? parseFloat(aiSimilarityPercent) : undefined;
-        article.plagiarismRemark = remark || '';
-
-        if (decision === 'Accept') {
-            article.plagiarismDecision = 'Accepted';
-            article.status = 'Plagiarism Check'; // Mark plagiarism stage complete
-
-            // Auto-assign reviewers and advance to Reviewer 1
-            try {
-                const [r1List, r2List, trList] = await Promise.all([
-                    User.find({ role: 'reviewer 1' }),
-                    User.find({ role: 'reviewer 2' }),
-                    User.find({ role: 'technical reviewer' }),
-                ]);
-
-                if (r1List.length === 1 && r2List.length === 1 && trList.length === 1) {
-                    article.reviewer1 = r1List[0]._id;
-                    article.reviewer2 = r2List[0]._id;
-                    article.technicalReviewer = trList[0]._id;
-                    article.status = 'Reviewer 1';
-
-                    // Notify assigned reviewers
-                    emailUtils.sendAssignmentEmailToReviewer(r1List[0].email, 'Reviewer 1', article.articleId, article.title);
-                    emailUtils.sendAssignmentEmailToReviewer(r2List[0].email, 'Reviewer 2', article.articleId, article.title);
-                    emailUtils.sendAssignmentEmailToReviewer(trList[0].email, 'Technical Reviewer', article.articleId, article.title);
-                } else {
-                    // If reviewers not fully set up, keep at Plagiarism Check (accepted) until assigned
-                    article.status = 'Reviewer 1';
-                }
-            } catch (assignErr) {
-                console.error('Auto-assignment after plagiarism check failed:', assignErr);
-                article.status = 'Reviewer 1';
-            }
-
-            await article.save();
-
-            // Notify author
-            if (article.submittedBy?.email) {
-                emailUtils.sendPlagiarismAcceptedEmail(article.submittedBy.email, article.articleId, article.title);
-                notifUtils.notifyPlagiarismPassed(article.submittedBy.email, article.articleId, article.title);
-                notifUtils.notifyStatusUpdate(article.submittedBy.email, article.articleId, article.title, 'Reviewer 1');
-            }
-
-            res.json({
-                success: true,
-                message: 'Plagiarism check accepted. Paper forwarded to reviewers.',
-                status: article.status,
-            });
-        } else {
-            // Reject
-            article.plagiarismDecision = 'Rejected';
-            article.status = 'Revision Required';
-            await article.save();
-
-            // Notify author
-            if (article.submittedBy?.email) {
-                emailUtils.sendPlagiarismRejectionEmail(article.submittedBy.email, article.articleId, article.title, remark);
-                notifUtils.notifyRevisionRequired(article.submittedBy.email, article.articleId, article.title, remark);
-            }
-
-            res.json({
-                success: true,
-                message: 'Paper rejected. Author notified to revise and resubmit.',
-                status: article.status,
-            });
-        }
-    } catch (error) {
-        console.error('Plagiarism check error:', error);
-        res.status(500).json({ message: 'Server error while processing plagiarism check.' });
     }
 };

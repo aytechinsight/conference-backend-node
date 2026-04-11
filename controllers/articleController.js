@@ -10,7 +10,7 @@ const fs = require('fs');
 // @access Private
 exports.submitArticle = async (req, res) => {
     try {
-        const { title, correspondingAuthorName, numberOfAuthors, authors, plagiarismDeclared } = req.body;
+        const { title, correspondingAuthorName, numberOfAuthors, authors, plagiarismDeclared, country, submissionPlanKey } = req.body;
 
         // Validation
         if (!title || !correspondingAuthorName || !numberOfAuthors || !authors || !plagiarismDeclared) {
@@ -38,6 +38,13 @@ exports.submitArticle = async (req, res) => {
             return res.status(400).json({ message: 'Please provide at least one author with name and email.' });
         }
 
+        // Enforce maximum author limit
+        const MAX_AUTHORS = 8;
+        if (parsedAuthors.length > MAX_AUTHORS) {
+            if (req.file) try { fs.unlinkSync(req.file.path); } catch {}
+            return res.status(400).json({ message: `A maximum of ${MAX_AUTHORS} authors is allowed per submission.` });
+        }
+
         for (const author of parsedAuthors) {
             if (!author.name || !author.email) {
                 if (req.file) fs.unlinkSync(req.file.path);
@@ -57,6 +64,8 @@ exports.submitArticle = async (req, res) => {
             originalFileName: req.file.originalname,
             plagiarismDeclared: plagiarismDeclared === 'true' || plagiarismDeclared === true,
             submittedBy: req.user._id,
+            ...(country && { country: country.trim() }),
+            ...(submissionPlanKey && { submissionPlanKey: submissionPlanKey.trim() }),
         });
 
         // In-app notification — paper submitted
@@ -170,8 +179,9 @@ exports.resubmitArticle = async (req, res) => {
         article.plagiarismRemark = undefined;
         article.plagiarismDecision = undefined;
 
-        // Reset status
-        article.status = 'Submitted';
+        // If TR is still assigned, go back to Plagiarism Check so TR can re-check
+        // without requiring superadmin to reassign. Otherwise fall back to Submitted.
+        article.status = article.technicalReviewer ? 'Plagiarism Check' : 'Submitted';
         await article.save();
 
         res.json({
@@ -224,7 +234,7 @@ exports.resubmitRevisedPaper = async (req, res) => {
         const originalPaperFileBeforeRevision = article.paperFile;
         const originalFileNameBeforeRevision = article.originalFileName;
 
-        // Return to the reviewer stage that requested the revision
+        // Which reviewer requested the revision (used for clearing report + notification)
         const returnStage = article.reviewRevisionStage;
 
         // ── Archive the current reviewer report into revision history BEFORE clearing ──
@@ -262,16 +272,13 @@ exports.resubmitRevisedPaper = async (req, res) => {
         article.paperFile = newFilePathNorm;
         article.originalFileName = req.file.originalname;
 
-        if (returnStage) {
-            article.status = returnStage;
-        } else {
-            // Fallback — shouldn't happen but safe
-            article.status = 'Reviewer 1';
-        }
+        // Always return to 'Under Review' so both reviewers can continue independently
+        article.status = 'Under Review';
 
         // Clear the old reviewer report for the stage that sent it back,
-        // so the reviewer gets a fresh review form for the revised paper.
-        // NOTE: Must use null + markModified, as assigning `undefined` to a
+        // so that reviewer gets a fresh review form for the revised paper.
+        // The other reviewer's existing decision (if any) remains intact.
+        // NOTE: Must use null + markModified — assigning `undefined` to a
         // Mongoose sub-document does not reliably persist the unset to MongoDB.
         if (returnStage === 'Reviewer 1') {
             article.reviewer1Report = null;
@@ -279,10 +286,17 @@ exports.resubmitRevisedPaper = async (req, res) => {
         } else if (returnStage === 'Reviewer 2') {
             article.reviewer2Report = null;
             article.markModified('reviewer2Report');
-        } else if (returnStage === 'Technical Reviewer') {
-            article.technicalReviewerReport = null;
-            article.markModified('technicalReviewerReport');
+        } else if (returnStage === 'Both') {
+            // Both reviewers requested revision — clear both reports
+            article.reviewer1Report = null;
+            article.reviewer2Report = null;
+            article.markModified('reviewer1Report');
+            article.markModified('reviewer2Report');
         }
+
+        // Reset review deadline so it starts fresh for this new round
+        article.reviewDeadline = undefined;
+        article.reviewDeadlineTriggered = false;
 
         // Clear revision fields
         article.reviewRevisionStage = undefined;
@@ -354,6 +368,13 @@ exports.resubmitAfterRejection = async (req, res) => {
             return res.status(400).json({ message: 'Please provide at least one author.' });
         }
 
+        // Enforce maximum author limit
+        const MAX_AUTHORS = 8;
+        if (parsedAuthors.length > MAX_AUTHORS) {
+            if (req.file) try { fs.unlinkSync(req.file.path); } catch {}
+            return res.status(400).json({ message: `A maximum of ${MAX_AUTHORS} authors is allowed per submission.` });
+        }
+
         for (const author of parsedAuthors) {
             if (!author.name || !author.email) {
                 if (req.file) try { fs.unlinkSync(req.file.path); } catch {}
@@ -401,10 +422,12 @@ exports.resubmitAfterRejection = async (req, res) => {
         article.paperFile = req.file.path.replace(/\\/g, '/');
         article.originalFileName = req.file.originalname;
 
-        // Clear ALL reviewer data — paper goes through the full process again
+        // Clear ALL reviewer data and assignments — paper goes through full process again
+        article.reviewer1 = undefined;
+        article.reviewer2 = undefined;
+        article.technicalReviewer = undefined;
         article.reviewer1Report = undefined;
         article.reviewer2Report = undefined;
-        article.technicalReviewerReport = undefined;
         article.reviewRevisionStage = undefined;
         article.reviewRevisionRemark = undefined;
         article.reviewRevisionDecision = undefined;
@@ -420,6 +443,10 @@ exports.resubmitAfterRejection = async (req, res) => {
         article.plagiarismDecision = undefined;
 
         // Reset to Submitted for fresh plagiarism check + review pipeline
+        // Mark as reapplied so admins/superadmins know this paper was previously rejected
+        article.reappliedFromRejection = true;
+        article.reviewDeadline = undefined;
+        article.reviewDeadlineTriggered = false;
         article.status = 'Submitted';
         await article.save();
 

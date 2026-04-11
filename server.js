@@ -13,12 +13,15 @@ connectDB();
 
 const app = express();
 
+// Trust Cloudflare / reverse-proxy forwarded headers (x-forwarded-proto, x-forwarded-host)
+app.set('trust proxy', true);
+
 // Body parser
 app.use(express.json());
 
 // Enable CORS
 app.use(cors({
-    origin: ['http://localhost:3000'],
+    origin: ['http://localhost:3000', 'https://prisoners-cas-acdbentity-cnet.trycloudflare.com'],
     credentials: true,
 }));
 
@@ -53,6 +56,8 @@ const adminRoutes = require('./routes/adminRoutes');
 const reviewerRoutes = require('./routes/reviewerRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const pushRoutes = require('./routes/pushRoutes');
+const siteConfigRoutes = require('./routes/siteConfigRoutes');
 
 // Mount routers
 app.use('/api/auth', authRoutes);
@@ -62,11 +67,28 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/reviewer', reviewerRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/push', pushRoutes);
+app.use('/api/site-config', siteConfigRoutes);
+
+// Public newsletter unsubscribe (no auth)
+const { unsubscribe } = require('./controllers/newsletterController');
+app.get('/api/newsletter/unsubscribe', unsubscribe);
+
 
 
 app.get('/', (req, res) => {
     res.send('API is running...');
 });
+
+// ── Background job: finalize review outcomes when deadline has passed ──
+// Runs every 30 seconds. Handles the case where one reviewer submitted their
+// review but the second reviewer has not, and the 2-minute deadline has expired.
+const { processExpiredReviewDeadlines } = require('./jobs/reviewDeadlineJob');
+setInterval(() => {
+    processExpiredReviewDeadlines().catch(err =>
+        console.error('[Review Deadline Job] Error:', err)
+    );
+}, 30 * 1000);
 
 const PORT = process.env.PORT || 5000;
 

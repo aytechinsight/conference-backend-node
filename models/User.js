@@ -40,8 +40,10 @@ const UserSchema = new mongoose.Schema({
         state: { type: String, default: '' },
         pinCode: { type: String, default: '' },
         country: { type: String, default: '' },
-    }
+    },
+    newsletterOptOut: { type: Boolean, default: false },
 }, { timestamps: true });
+
 
 UserSchema.pre('save', async function () {
     if (!this.isModified('password') || !this.password) return;
